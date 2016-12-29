@@ -1,0 +1,141 @@
+/* Set directory for the project */
+libname KevinLib 'F:\STAT510\Final Project';
+
+DM "output;clear;log;clear";
+Options pagesize = 45 linesize = 80 PageNo = 1 NoDate;
+
+/* Set the directory and name of the output file. */
+ODS RTF File = "F:\STAT510\Final Project\results.doc";
+ODS Listing Close;	
+
+/* Import data from Excel file */
+proc import out=trucking
+ datafile = "F:\STAT510\Final Project\truckdata.xlsx"
+        dbms = Excel replace; 
+ label y1  ='PRICPTM'
+ 	   x1  ='DISTANCE'
+ 	   x2  ='WEIGHT'
+ 	   x3  ='PCTLOAD'
+	   x4  ='ORIGIN'
+	   x4n ='ORIGINNUM'
+	   x5  ='MARKET'
+	   x5n ='MARKETNUM'
+	   x6  ='DEREG'
+	   x6n ='DEREGNUM'
+	   x7  ='CARRIER'
+	   x8  ='PRODUCT'
+	   y2  ='LNPRICE'
+;
+
+/* Remove columns origin, market, dereg, and carrier */
+proc sql;
+ alter table trucking
+ drop x4, x5, x6, x7; /* replaced origin, market, dereg with numerical values and
+							removed carrier because they are all the same */
+
+/* Simple Statistics */
+proc means data = trucking;
+run;
+
+/* Create QQPlot of pricptm (y1) vs residuals */
+proc reg data = trucking;
+ model y1 = x1 -- x8;
+ output out = new P = pred R = resid;
+run; 
+
+proc univariate data = new;
+ histogram resid / normal;
+ qqplot y1 / normal;
+run;
+
+/* Create QQPlot of lnprice (y2) vs residuals */
+proc reg data = trucking;
+ model y2 = x1 -- x8;
+ output out = new P = pred R = resid;
+run; 
+
+proc univariate data = new;
+ histogram resid / normal;
+ qqplot y2 / normal;
+run;
+
+/* Correlation Matrix */
+proc corr data = trucking;
+ var x1 -- x8;
+run;
+
+/* Selection Statistics for Model Listing the top option for each number of variables */
+proc reg data = trucking outest = b;
+ model y2 = x1 -- x8
+	      /selection = rsquare adjrsq cp sse press aic bic best = 1;
+run;
+
+/* Drop unneccesary outputs from estimates above */
+proc sql;
+ alter table b
+ drop _model_, _type_, _depvar_, _rmse_, _press_, y2, _in_, _p_, _edf_;
+
+/* Print selection statistics to make a decision */
+proc print data = b;
+run;
+
+/* Stepwise Selection from variables chosen in selection statistics */
+proc reg data = trucking;
+ model y2 = x1 -- x8 / selection = stepwise slentry = .1 slstay = .15;
+run;
+
+/* Transforms Distance into square distance */
+data trucking;
+ set trucking;
+     x1sq = x1**2;
+run;
+
+/* Model including all variables from stepwise and distance squared */
+proc reg data = trucking;
+ model y2 = x1 x1sq x2 x4n x6n x8;
+run;
+
+/* Interaction Terms */
+data truckingint;
+ set trucking;
+     x12  = x1  * x2;
+	 x14n = x1  * x4n;
+	 x18  = x1  * x8;
+	 x26n = x2  * x6n;
+	 x28  = x2  * x8;
+	 x6n8 = x6n * x8;
+run;
+
+/* Choosing which two way interaction terms to add */
+proc reg data = truckingint;
+ model y2 = x1 x1sq x2 x6n x8 x12;
+ model y2 = x1 x1sq x2 x6n x8 x14n;
+ model y2 = x1 x1sq x2 x6n x8 x18;
+ model y2 = x1 x1sq x2 x6n x8 x26n;
+ model y2 = x1 x1sq x2 x6n x8 x28;
+ model y2 = x1 x1sq x2 x6n x8 x6n8;
+run;
+
+/* Check for outlying observations and influential outliers. */ 
+proc reg data = truckingint;
+ model y2 = x1 x1sq x2 x6n x8 x26n / influence r;
+ ods output outputStatistics = a;
+run;
+
+data truckingfinal;
+ set a;
+run;
+
+/* Outputs the points that are more likely to be outliers with certain outlier statistics */
+proc print data = truckingfinal;
+ where observation = 4  or 
+       observation = 9  or 
+       observation = 53 or 
+       observation = 72 or 
+       observation = 78 or 
+       observation = 117;
+ var rstudent hatdiagonal dffits dfb_intercept dfb_x1 dfb_x1sq dfb_x2 dfb_x6n dfb_x8 dfb_x26n;
+run;
+
+ODS Listing;
+ODS RTF Close;
